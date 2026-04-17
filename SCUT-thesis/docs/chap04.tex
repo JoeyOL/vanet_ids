@@ -1,0 +1,150 @@
+\chapter{系统实现}
+\label{cha:system-implementation}
+
+\section{数据预处理实现}
+\label{sec:implementation-preprocess}
+
+数据预处理由 \texttt{data\_processor.py} 中的 \texttt{DataProcessor} 类负责实现，是整套系统中最先执行且最基础的环节。该模块首先通过 \texttt{discover\_data\_files()} 在指定目录中递归发现可处理数据文件，支持 CSV、TSV 与 Excel 三类表格输入；若路径不存在、格式不受支持或目录中没有可处理文件，系统会直接抛出异常，从而避免在后续训练阶段出现隐蔽错误。随后，\texttt{\_load\_dataset()} 将多个文件读取并合并为统一数据表，为进一步清洗与特征构造提供基础。
+
+在字段清洗方面，预处理模块采用了“列名规范化—标签列识别—缺失值填补”的处理流程。\texttt{\_normalize\_columns()} 会将原始列名统一转换为小写并用下划线连接，减少不同数据源列命名差异带来的影响；\texttt{\_ensure\_label\_column()} 则会自动识别 \texttt{label}、\texttt{labels}、\texttt{class}、\texttt{attack}、\texttt{attack\_type} 等常见别名，并统一映射为系统内部使用的标签列。之后，\texttt{\_handle\_missing\_values()} 按字段类型进行差异化填补：数值列优先转换为数值并以中位数补全，字符串列采用众数或 \texttt{unknown} 填充，从而保持数据矩阵的完整性。
+
+在标签处理与特征提取方面，系统采用了与车联网日志数据相适配的规则式方案。\texttt{\_standardize\_labels()} 会把正常类标签统一到 \texttt{benign}，攻击类标签统一到 \texttt{attack}，其余标签则经过正则清洗后保留；随后，\texttt{\_extract\_features()} 根据字段内容自动选择特征化方式：数值列直接转为浮点特征，时间类字段转换为时间戳，普通字符串字段则提取长度、编码结果、词元计数和唯一字符数等统计特征；若字段名包含 \texttt{payload}、\texttt{data}、\texttt{frame} 或 \texttt{message} 等关键词，还会进一步计算十六进制长度和非零字节比例。相比完全手工设计特征的方式，该实现更强调对多源表格数据的适配性与自动化程度。
+
+完成特征与标签编码后，系统通过 \texttt{\_build\_label\_mapping()} 构建标签映射，并调用 \texttt{\_split\_dataset()} 按配置比例划分训练集和验证集。若各类样本数量满足条件，切分过程会优先使用分层抽样，以尽量保持类别分布稳定；否则回退到普通随机划分。最终，\texttt{\_persist\_artifacts()} 将结果分别写入 \texttt{train\_processed.csv}、\texttt{val\_processed.csv} 和 \texttt{label\_mapping.json}。至此，预处理阶段完成了从原始多文件数据到标准训练输入的转换。
+
+为便于后续补充正式流程图，本节预留预处理流程伪代码占位，如图\ref{fig:preprocess-placeholder}所示。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        数据预处理流程占位。\\
+        建议后续绘制“数据发现 $\rightarrow$ 列规范化 $\rightarrow$ 标签识别 $\rightarrow$ 缺失值处理 $\rightarrow$ 特征提取 $\rightarrow$ 数据切分 $\rightarrow$ 结果落盘”的伪代码或流程图。
+    }}
+    \caption{数据预处理流程占位图}
+    \label{fig:preprocess-placeholder}
+\end{figure}
+
+\section{客户端切分与状态建模实现}
+\label{sec:implementation-client-split}
+
+在联邦训练开始之前，系统需要将统一训练集转换为多个客户端的本地训练上下文。该过程由 \texttt{FedAvgProxOptimizer} 中的 \texttt{\_prepare\_client\_states()} 完成。若外部未显式传入带有训练路径的客户端状态列表，系统会根据 \texttt{num\_clients} 参数把训练数据按索引均匀切分为若干子集，并将每个子集分别保存到 \texttt{outputs/clients/client\_i\_train.csv} 文件中。这样做有两个好处：一方面，后续本地训练过程可以直接通过文件路径读取客户端样本；另一方面，客户端切分结果会保留在磁盘中，便于实验排查与附录引用。
+
+系统使用 \texttt{schemas.py} 中定义的 \texttt{ClientState} 数据结构来描述客户端状态。除了客户端编号、训练数据路径、样本数等基本信息外，该结构还维护节点可用性、算力水平、电量水平、信道质量、隐私本地性分数、上一次训练损失、训练耗时和最近一次选择评分等字段，为动态节点选择与训练过程分析提供数据支撑。需要强调的是，当前资源属性并非来自真实车端硬件监测，而是根据客户端编号按规则赋予的仿真值，其目的在于构造可重复的资源异构场景，而非精确刻画某一具体车辆设备的真实状态。
+
+若已有外部构造的客户端状态传入系统，\texttt{\_prepare\_client\_states()} 会优先复用这些对象，并通过 \texttt{\_hydrate\_client\_resources()} 补齐缺失的算力、电量、信道质量和隐私本地性字段。这种实现体现了系统在接口层面的扩展性：既可以直接使用内置仿真资源生成逻辑，也可以在后续研究中替换为更真实的节点状态来源。客户端切分与状态建模的结果，将直接影响每轮联邦训练中的节点筛选与聚合权重分配，因此是连接数据预处理与联邦优化的关键桥梁。
+
+表\ref{tab:client-state-placeholder} 为客户端状态字段预留说明位置，便于后续补充更细致的参数描述。
+
+\begin{table}[htbp]
+    \centering
+    \caption{客户端状态字段占位表}
+    \label{tab:client-state-placeholder}
+    \begin{tabular}{p{3.4cm}p{8.8cm}}
+        \toprule
+        字段 & 说明 \\
+        \midrule
+        \texttt{client\_id}、\texttt{train\_data\_path}、\texttt{num\_samples} & 描述客户端身份、本地训练数据位置和样本规模。 \\
+        \texttt{compute\_capacity}、\texttt{battery\_level}、\texttt{channel\_quality} & 描述客户端在节点选择中的三维资源状态。 \\
+        \texttt{privacy\_locality\_score} & 表征数据保留在本地的隐私代理基础分。 \\
+        \texttt{last\_loss}、\texttt{last\_training\_time\_ms}、\texttt{last\_selection\_score} & 记录最近一次训练和选择过程中的关键统计量。 \\
+        \texttt{metadata} & 存储附加信息，如历史入选次数等。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{联邦训练与聚合实现}
+\label{sec:implementation-federated-training}
+
+联邦训练主流程由 \texttt{FedAvgProxOptimizer.train()} 驱动。方法执行时，系统首先读取预处理结果，构建全局模型与初始参数副本，再按设定轮数循环执行联邦通信轮次。在每一轮中，系统先调用 \texttt{score\_available\_clients()} 对所有可用节点进行评分，并根据资源状况与公平性惩罚计算综合分数；随后通过 \texttt{select\_clients()} 按 \texttt{client\_fraction} 从高到低选择参与节点。该选择机制并非随机采样，而是显式利用算力、电量和信道状态构造优先级，因此更符合车联网资源受限环境下的训练调度逻辑。
+
+对于被选中的每个客户端，系统通过 \texttt{\_train\_single\_client()} 执行本地训练。该函数会读取本地数据文件，构造 \texttt{TensorDataset} 和 \texttt{DataLoader}，再初始化 \texttt{LightweightCNNLSTM} 模型，并将全局参数加载为本地初始状态。本地优化器使用 Adam，任务损失为交叉熵。若配置中启用了 \texttt{fedprox\_mu}，系统会通过 \texttt{\_compute\_fedprox\_penalty()} 在分类损失之外追加参数偏移惩罚，从而抑制局部模型与全局参考模型的过度偏离。每个客户端本地训练完成后，系统会记录平均损失、训练时长和对应的选择证据，为后续分析节点选择与训练表现的关系提供依据。
+
+当一轮中的全部客户端完成本地更新后，系统先对每个客户端的模型增量执行压缩重建，再由 \texttt{aggregate\_weights()} 进行全局聚合。该函数按照客户端样本量对浮点参数执行加权平均，对非浮点张量则直接复制模板值。由此可见，当前系统使用的是基于样本权重的参数聚合，而非密码学意义上的安全聚合方案。全局聚合完成后，系统会立即在验证集上调用模型评估接口，并将本轮选中节点、平均本地损失、平均训练耗时、通信统计、隐私代理分数和验证结果一并写入训练历史中。
+
+为了方便论文后续增加算法描述，本节预留联邦训练关键算法流程占位，如图\ref{fig:federated-algorithm-placeholder}所示。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        联邦训练与聚合算法占位。\\
+        建议后续以伪代码形式描述：初始化全局模型、客户端评分与选择、本地训练、更新压缩、按样本数聚合、验证评估、历史记录更新。
+    }}
+    \caption{联邦训练与聚合算法占位图}
+    \label{fig:federated-algorithm-placeholder}
+\end{figure}
+
+\section{参数压缩与通信统计实现}
+\label{sec:implementation-communication}
+
+在车联网联邦训练中，模型参数更新的传输成本直接影响系统吞吐与部署可行性。为此，当前系统在 \texttt{\_compress\_client\_update()} 中实现了“参数增量计算—Top-K 稀疏化—定点量化—重建统计”的压缩流程。具体而言，系统首先计算本地模型与全局模型之间的参数差值，将其展平为向量；随后根据 \texttt{compression\_topk\_ratio} 选取绝对值最大的若干分量，仅保留最关键的更新位置；若量化位宽设置为 8 或 16，则进一步对选中分量执行缩放、离散化与反量化重建，以减少表示更新所需的字节数；若位宽为 32，则可视为不量化。
+
+压缩完成后，系统不仅恢复一个近似的客户端更新状态用于后续聚合，还会同步生成通信统计记录，包括原始字节数、压缩后字节数、保留比例和总压缩率等信息。随后，\texttt{\_summarize\_round\_communication()} 会基于所有客户端压缩记录，计算该轮的原始通信量、压缩后通信量、相对本轮原始上传量的压缩率，以及相对“全体可用客户端均上传完整模型”这一基线的节省比例。这样的实现使得通信收益既可以从局部压缩效果观察，也可以从整体系统层面衡量。
+
+在此基础上，系统还通过 \texttt{\_calculate\_privacy\_proxy\_score()} 构造隐私代理指标。该指标将客户端的本地性分数与压缩收益加权组合，反映“原始数据不出本地”与“上传更新量减少”对隐私暴露面的共同影响。需要强调的是，这一分数是工程分析用的代理量，而不是理论可证的隐私保障指标。因此，在论文中应将其用于相对比较，而不能将其描述为严格隐私证明。
+
+为了便于后续补充具体图表，本节预留通信统计图和压缩参数表的位置，分别见图\ref{fig:communication-placeholder}与表\ref{tab:compression-placeholder}。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        通信统计图占位。\\
+        建议后续展示不同方案下总通信量、平均轮次耗时和隐私代理分数的对比柱状图或折线图。
+    }}
+    \caption{通信统计与压缩收益占位图}
+    \label{fig:communication-placeholder}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{压缩机制关键参数占位表}
+    \label{tab:compression-placeholder}
+    \begin{tabular}{p{3.6cm}p{8.6cm}}
+        \toprule
+        参数或指标 & 说明 \\
+        \midrule
+        \texttt{compression\_topk\_ratio} & 控制每次上传保留的参数增量比例。 \\
+        \texttt{quantization\_bits} & 控制压缩值的量化位宽，当前支持 8、16、32 位。 \\
+        \texttt{original\_bytes} 与 \texttt{compressed\_bytes} & 分别表示未压缩更新和压缩后更新的字节数。 \\
+        \texttt{reduction\_ratio} & 描述压缩后相对于原始更新的节省比例。 \\
+        \texttt{saving\_against\_full\_participation} & 描述相对于全量节点完整上传基线的整体节省比例。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{模型评估与报告落盘实现}
+\label{sec:implementation-evaluation}
+
+模型评估主要通过 \texttt{models.py} 中的 \texttt{evaluate()} 与 \texttt{metrics.py} 中的 \texttt{calculate\_classification\_metrics()} 协同完成。评估阶段首先加载全局模型检查点，然后在验证集上执行批量预测，获得预测标签与损失值，最后计算 Accuracy、Precision、Recall、F1、假正率、样本量和混淆矩阵等指标。由于这些指标统一封装在 \texttt{EvalResult} 结构中，因此既可以作为训练过程中每一轮的验证结果，也可以作为独立测试模式下的最终评估结果。该设计使得训练阶段和测试阶段共享同一套评价口径，减少了实验对比中的统计偏差。
+
+除评估外，系统还特别强调运行证据的自动落盘。\texttt{runtime\_utils.py} 中的 \texttt{save\_json()} 会把配置快照、运行元数据与评估结果保存为 JSON 文件，\texttt{collect\_run\_metadata()} 则记录模式、命令行参数、时间戳、Python 版本、平台信息和当前工作目录。与此同时，\texttt{app\_logging.py} 中的 \texttt{setup\_logging()} 统一配置控制台与文件日志，可根据配置选择普通文本格式或 JSON 日志格式。这样一来，系统不仅能输出最终结果，还能保留完整的运行上下文与日志轨迹，有利于问题定位和论文附录整理。
+
+在联邦训练结束后，系统调用 \texttt{\_build\_federated\_report()} 汇总训练历史、模型规模、通信收益、平均本地训练耗时、平均隐私代理分数和最终评估结果，并通过 \texttt{\_persist\_federated\_report()} 同时生成 JSON 与 Markdown 两种格式的联邦训练报告。前者适合后续程序分析，后者适合直接作为实验记录证据或附录材料。配合 \texttt{training\_history.json}、\texttt{global\_model.pt}、\texttt{config\_snapshot.json} 和 \texttt{run\_metadata.json} 等文件，系统最终形成了较为完整的证据留存链条。
+
+表\ref{tab:outputs-placeholder} 为关键输出文件预留说明位置，便于后续在附录中进一步展开。
+
+\begin{table}[htbp]
+    \centering
+    \caption{系统关键输出文件占位表}
+    \label{tab:outputs-placeholder}
+    \begin{tabular}{p{4.1cm}p{8.1cm}}
+        \toprule
+        输出文件 & 作用 \\
+        \midrule
+        \texttt{train\_processed.csv}、\texttt{val\_processed.csv} & 保存预处理后的训练集与验证集。 \\
+        \texttt{label\_mapping.json} & 保存标签到数值编码的映射关系。 \\
+        \texttt{training\_history.json} & 保存各轮次选点、训练损失、通信统计和验证结果。 \\
+        \texttt{global\_model.pt} & 保存联邦训练后的全局模型检查点。 \\
+        \texttt{reports/evaluation.json} & 保存独立测试模式下的评估指标结果。 \\
+        \texttt{reports/federated\_training\_report.json}、\texttt{reports/federated\_training\_report.md} & 保存联邦训练汇总报告，支持程序读取和人工查看。 \\
+        \texttt{logs/app.log}、\texttt{config\_snapshot.json}、\texttt{run\_metadata.json} & 保存日志、配置快照和运行上下文信息。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{本章小结}
+\label{sec:implementation-summary}
+
+本章围绕系统实现层面展开说明，依次介绍了数据预处理、客户端切分与状态建模、联邦训练与聚合、参数压缩与通信统计，以及模型评估与报告落盘等关键机制。可以看出，当前项目虽然规模不大，但已经具备较完整的工程闭环：既能完成从原始数据到全局模型的训练流程，也能保留足够丰富的运行证据，为实验对比和论文写作提供支撑。基于这些实现细节，下一章将进一步结合现有实验设计文档、改进方案报告与基线方案报告，对系统的性能表现、综合收益和现阶段局限性进行分析。

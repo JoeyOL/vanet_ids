@@ -1,0 +1,26 @@
+%%
+% 摘要信息
+% 本文档中前缀"c-"代表中文版字段, 前缀"e-"代表英文版字段
+% 摘要内容应概括地反映出本论文的主要内容，主要说明本论文的研究目的、内容、方法、成果和结论。要突出本论文的创造性成果或新见解，不要与引言相 混淆。语言力求精练、准确，以 300—500 字为宜。
+% 在摘要的下方另起一行，注明本文的关键词（3—5 个）。关键词是供检索用的主题词条，应采用能覆盖论文主要内容的通用技术词条(参照相应的技术术语 标准)。按词条的外延层次排列（外延大的排在前面）。摘要与关键词应在同一页。
+%%
+
+\cabstract{
+
+    面向车联网环境的入侵检测任务具有节点分散、数据异构、通信受限和隐私敏感等特点，传统集中式训练方案难以同时兼顾检测性能、通信效率与数据安全。针对上述问题，本文围绕“基于联邦学习的车联网入侵检测系统设计与实现”开展研究，依托现有工程代码构建了包含数据预处理、联邦训练与本地评估三条命令行链路的原型系统。系统采用轻量化 CNN-LSTM 模型作为检测器，在联邦训练阶段实现了 FedAvg/FedProx 聚合框架，并引入基于算力、电量与信道质量的动态节点选择机制，同时结合 Top-K 稀疏化与定点量化策略以降低参数上传开销；此外，系统还支持配置加载、日志记录、模型检查点保存及证据报告落盘，便于实验复现与结果追踪。
+
+    基于仓库内置演示数据与实验报告的验证结果表明：相较于未压缩且全节点参与的基线 FedAvg 方案，改进方案在当前小样本实验中将总训练时间降低约 12.27\%，平均轮次耗时降低约 8.51\%，总通信量降低约 80.28\%，而 Accuracy、Recall 与 F1-score 仍保持在 0.60、1.00 与 0.75 的同一水平。实验结果说明，所设计系统能够在不上传原始数据的前提下完成联邦建模，并在演示性场景中体现出较好的综合收益。考虑到当前实验样本规模较小，正式论文阶段仍需在真实 VeReMi 或 Car-Hacking 数据集上开展多次重复实验，以进一步验证系统稳定性与泛化能力。
+
+}
+% 中文关键词(每个关键词之间用“，”分开,最后一个关键词不打标点符号。)
+\ckeywords{联邦学习；车联网；入侵检测；CNN-LSTM；参数压缩}
+
+\eabstract{
+    % 英文摘要及关键词内容应与中文摘要及关键词内容相同。中英文摘要及其关键词各置一页内。
+    Intrusion detection in the Internet of Vehicles is challenged by geographically distributed nodes, heterogeneous local data, constrained communication resources, and strict privacy requirements. To address these issues, this thesis studies the design and implementation of a federated learning-based intrusion detection system for the Internet of Vehicles. Based on the existing project codebase, a prototype system is organized into three command-line workflows: data preprocessing, federated training, and local evaluation. A lightweight CNN-LSTM model is used as the detector, while the federated training module supports the FedAvg/FedProx aggregation framework. In addition, a dynamic client selection strategy based on computing capability, battery level, and channel quality is introduced, and Top-K sparsification together with fixed-point quantization is adopted to reduce model update transmission cost. The system also provides configuration loading, logging, checkpoint persistence, and evidence report generation to support reproducibility.
+
+    Experimental evidence from the built-in demo dataset and archived reports shows that, compared with an uncompressed full-participation FedAvg baseline, the improved method reduces total training time by about 12.27\%, decreases mean round duration by about 8.51\%, and lowers overall communication volume by about 80.28\% in the current small-sample experiment, while maintaining the same Accuracy, Recall, and F1-score at 0.60, 1.00, and 0.75 respectively. These results indicate that the proposed system can complete collaborative model training without uploading raw vehicular data and can achieve a better trade-off between communication efficiency and detection effectiveness in a demonstrative scenario. Since the present experiment is still limited by sample size, further repeated evaluation on real VeReMi or Car-Hacking datasets is required in the formal thesis stage.
+
+}
+% 英文文关键词(每个关键词之间用,分开, 最后一个关键词不打标点符号。)
+\ekeywords{Federated learning, Internet of Vehicles, Intrusion detection, CNN-LSTM, Communication compression}

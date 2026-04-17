@@ -1,0 +1,91 @@
+\chapter{复现实验命令与结果文件说明}
+\label{app:repro-materials}
+
+\section{复现实验命令示例}
+\label{app:repro-commands}
+
+本附录整理当前仓库中可直接复现的预处理、训练与测试命令，供正文第\ref{cha:experiment-analysis}章引用。以下命令均假定用户已在项目根目录完成依赖安装，并使用虚拟环境中的 Python 解释器执行。
+
+\subsection{数据预处理命令}
+
+预处理阶段用于生成训练集、验证集和标签映射：
+
+\begin{verbatim}
+./.venv/bin/python main.py --mode preprocess --config configs/default.toml
+\end{verbatim}
+
+执行完成后，默认会在 `outputs/` 目录中生成 `train\_processed.csv`、`val\_processed.csv` 与 `label\_mapping.json`。
+
+\subsection{改进方案训练命令}
+
+为了与正文中的改进方案结果保持一致，可使用如下命令执行动态节点选择 + Top-K 压缩 + 8 位量化的联邦训练：
+
+\begin{verbatim}
+./.venv/bin/python main.py --mode train --config configs/default.toml \
+  --output-dir outputs --rounds 3 --clients 4 --epochs 2 --batch-size 8 \
+  --client-fraction 0.75 --topk-ratio 0.2 --quant-bits 8 \
+  --selection-weight-compute 0.4 --selection-weight-battery 0.3 \
+  --selection-weight-channel 0.3 --run-name evidence_demo
+\end{verbatim}
+
+\subsection{基线方案训练命令}
+
+标准 FedAvg 基线方案采用全客户端参与且关闭压缩上传，其结果建议单独输出到 `outputs/baseline\_fedavg/` 目录：
+
+\begin{verbatim}
+./.venv/bin/python main.py --mode train --config configs/default.toml \
+  --output-dir outputs/baseline_fedavg --rounds 3 --clients 4 --epochs 2 \
+  --batch-size 8 --client-fraction 1.0 --topk-ratio 1.0 --quant-bits 32 \
+  --selection-weight-compute 0.4 --selection-weight-battery 0.3 \
+  --selection-weight-channel 0.3 --run-name baseline_fedavg
+\end{verbatim}
+
+\subsection{模型评估命令}
+
+训练完成后，可分别对改进方案和基线方案执行评估：
+
+\begin{verbatim}
+./.venv/bin/python main.py --mode test --config configs/default.toml \
+  --output-dir outputs --rounds 3 --clients 4 --epochs 2 --batch-size 8 \
+  --run-name evidence_demo
+
+./.venv/bin/python main.py --mode test --config configs/default.toml \
+  --output-dir outputs/baseline_fedavg --rounds 3 --clients 4 --epochs 2 \
+  --batch-size 8 --run-name baseline_fedavg
+\end{verbatim}
+
+\section{关键输出文件与证据路径}
+\label{app:output-files}
+
+为了支撑正文中的实验分析，当前项目将关键结果文件统一保存在 `outputs/` 及其子目录中。主要文件说明如表\ref{tab:appendix-output-files}所示。
+
+\begin{table}[htbp]
+    \centering
+    \caption{附录中的关键输出文件说明}
+    \label{tab:appendix-output-files}
+    \begin{tabular}{p{4.5cm}p{7.7cm}}
+        \toprule
+        文件路径 & 说明 \\
+        \midrule
+        `outputs/train\_processed.csv` & 预处理后的训练集文件。 \\
+        `outputs/val\_processed.csv` & 预处理后的验证集文件，也是当前测试模式使用的数据来源。 \\
+        `outputs/label\_mapping.json` & 标签编码映射文件。 \\
+        `outputs/global\_model.pt` & 改进方案生成的全局模型检查点。 \\
+        `outputs/training\_history.json` & 改进方案的逐轮训练历史。 \\
+        `outputs/reports/evaluation.json` & 改进方案测试评估结果。 \\
+        `outputs/reports/federated\_training\_report.json` & 改进方案的结构化联邦训练报告。 \\
+        `outputs/reports/federated\_training\_report.md` & 改进方案的 Markdown 证据报告。 \\
+        `outputs/baseline\_fedavg/reports/evaluation.json` & 基线方案测试评估结果。 \\
+        `outputs/baseline\_fedavg/reports/federated\_training\_report.md` & 基线方案的 Markdown 证据报告。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+其中，正文第\ref{sec:experiment-results}节主要使用了以下文件作为分析证据：`outputs/reports/federated\_training\_report.md`、`outputs/baseline\_fedavg/reports/federated\_training\_report.md`、`outputs/reports/evaluation.json` 和 `outputs/baseline\_fedavg/reports/evaluation.json`。
+
+\section{关键配置与参数补充说明}
+\label{app:config-notes}
+
+默认配置文件 `configs/default.toml` 为系统提供了可运行的基础参数，其核心内容包括：数据集名称 `VeReMi \& Car-Hacking`、标签列 `label`、验证集比例 `0.2`、客户端数量 `4`、默认联邦轮数 `5`、默认 Top-K 比例 `0.1`、量化位宽 `8` 以及节点选择权重 `0.4 / 0.3 / 0.3`。正文实验部分为了对比方便，将轮数调整为 3，并对改进方案与基线方案分别使用不同的客户端参与率、Top-K 比例和量化位宽。
+
+附录中列出的命令与参数主要用于复现实验链路和验证已有结果文件，不代表正式论文最终实验配置已经完备。后续若引入真实数据集、多分类攻击标签或更多对照组，需要同步更新命令示例、结果目录和参数表，以保证正文、附录和产物路径始终一致。

@@ -1,0 +1,114 @@
+\chapter{系统分析与总体设计}
+\label{cha:system-design}
+
+\section{系统目标与使用场景}
+\label{sec:system-design-goals}
+
+本文设计的系统面向车联网环境中的分布式入侵检测任务，其核心目标不是追求单一指标的极端最优，而是在可运行、可复现和可验证的前提下，构建一条覆盖数据预处理、联邦训练和本地评估的完整工程链路。结合现有代码，系统需要同时满足以下目标：第一，能够从本地表格化车联网数据中自动发现可处理文件，并完成标签规范化、特征提取与训练/验证数据集导出；第二，能够在多客户端场景下执行联邦训练，支持动态节点选择、样本数加权聚合以及参数压缩；第三，能够对全局模型进行评估，并将配置快照、日志、训练历史、评估结果和联邦训练报告统一落盘，便于论文写作与实验复现。
+
+从应用场景来看，该系统适用于具备边缘节点或协调服务器的车联网安全监测环境。在该场景中，不同车辆或车载终端会持续产生与通信行为、控制指令或状态变化相关的数据。由于原始数据可能包含敏感内容，系统不直接上传完整样本，而是先在本地完成预处理与模型更新，再由中心端聚合模型参数。当前实现更接近“联邦训练流程仿真与原型验证”而非真实车辆网络部署：客户端训练过程在单机环境中顺序模拟完成，重点在于验证模块边界、输出产物和指标采集机制是否完整，而不是构建大规模实网分布式调度平台。
+
+结合代码可知，系统的使用边界也较为明确。其一，当前输入数据为 CSV、TSV 或 Excel 等表格文件，系统假设原始数据已经以离线文件形式可获取；其二，训练与评估依赖预处理产物，因此在执行 `train` 和 `test` 模式之前必须先完成 `preprocess` 模式；其三，系统采用验证集进行效果评估，尚未单独提供独立测试集流程；其四，隐私保护主要体现为“数据不出本地”和“更新量压缩”，并未实现密码学意义上的安全聚合或严格差分隐私机制。上述边界决定了本文后续分析必须以工程原型视角展开，而不能将现有实现表述为完备的生产级车联网安全平台。
+
+为便于后续补充正式绘图，本章预留系统总体架构图位置，如图\ref{fig:system-architecture-placeholder}所示。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        系统总体架构图占位。\\
+        建议后续绘制“数据源层—预处理层—联邦训练协调层—车端本地检测层—结果与证据输出层”的五层结构图，突出 `main.py`、`data\_processor.py`、`federated\_learning.py`、`models.py`、`metrics.py` 与 `outputs/` 之间的关系。
+    }}
+    \caption{车联网联邦入侵检测系统总体架构占位图}
+    \label{fig:system-architecture-placeholder}
+\end{figure}
+
+\section{总体架构设计}
+\label{sec:system-design-architecture}
+
+从代码组织方式看，系统可划分为入口编排、配置管理、数据预处理、联邦训练、模型定义、指标计算、运行支撑和结果输出八个核心部分。其中，`main.py` 负责统一命令行入口与流程调度；`config.py` 负责 TOML/JSON 配置加载、相对路径解析以及运行时配置对象构建；`data\_processor.py` 面向原始表格数据完成清洗与特征工程；`federated\_learning.py` 负责客户端选择、本地训练、参数聚合、压缩统计与训练历史维护；`models.py` 提供轻量化 CNN-LSTM 模型定义与评估接口；`metrics.py` 则封装分类指标计算逻辑；`runtime\_utils.py` 与 `app\_logging.py` 提供随机种子设置、元数据保存和日志输出支持；所有运行证据最终沉淀至 `outputs/` 目录。
+
+若从职责分层角度进一步抽象，可以将系统分为三层。第一层为数据与配置层，对应原始数据文件、配置文件以及运行时参数；第二层为联邦训练与检测核心层，对应预处理、模型训练、聚合和评估逻辑；第三层为结果与证据层，对应训练历史、模型检查点、日志、评估结果和联邦训练报告等产物。三层之间通过数据文件与配置对象连接：配置层将运行参数封装为 `AppConfig`，核心层据此执行处理逻辑，结果层再将运行证据持久化。该结构既有助于保持模块边界清晰，也方便在后续扩展真实数据集、更多模型或更复杂实验设置时复用既有流程。
+
+在总体架构中，各模块的接口关系较为稳定。`PathConfig` 为所有产物提供统一路径约定，如预处理文件、日志目录、报告目录和模型检查点；`DatasetConfig` 定义数据集名称、标签列和验证集比例；`TrainingConfig` 定义轮数、客户端数量、局部训练轮数、压缩比例、量化位宽和选择权重等关键参数；`ClientState`、`PreprocessResult` 与 `EvalResult` 则在模块间传递客户端状态、预处理结果与评估结果。由此形成了“配置对象驱动流程、数据结构串联模块、输出目录保留证据”的系统设计风格。
+
+表\ref{tab:system-modules} 总结了系统主要模块及其功能定位。
+
+\begin{table}[htbp]
+    \centering
+    \caption{系统核心模块与职责划分}
+    \label{tab:system-modules}
+    \begin{tabular}{p{3.2cm}p{9.6cm}}
+        \toprule
+        模块 & 主要职责 \\
+        \midrule
+        `main.py` & 统一 CLI 入口，解析参数，构建配置对象，按模式调度预处理、训练与测试流程。 \\
+        `config.py` & 加载 TOML/JSON 配置，解析路径，定义 `AppConfig` 及其子配置对象。 \\
+        `data\_processor.py` & 发现数据文件，规范化标签与列名，提取数值、时间和字符串特征，导出训练/验证数据。 \\
+        `federated\_learning.py` & 切分客户端数据，执行节点选择、本地训练、参数聚合、通信统计与联邦报告生成。 \\
+        `models.py` 与 `metrics.py` & 定义轻量化 CNN-LSTM 模型并计算 Accuracy、Precision、Recall、F1 等指标。 \\
+        `runtime\_utils.py` 与 `app\_logging.py` & 负责随机种子控制、元数据保存、控制台与文件日志输出。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+为便于后续在论文中补充更加规范的模块关系图，本节同时预留模块关系图位置，如图\ref{fig:module-relationship-placeholder}所示。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        模块关系图占位。\\
+        建议后续绘制入口层、配置层、预处理层、训练层、评估层、日志/报告层之间的调用关系，并突出 `AppConfig`、`ClientState`、`PreprocessResult` 和 `EvalResult` 的数据流作用。
+    }}
+    \caption{系统模块关系占位图}
+    \label{fig:module-relationship-placeholder}
+\end{figure}
+
+\section{数据流与运行流程设计}
+\label{sec:system-design-dataflow}
+
+系统运行流程由 `main.py` 的 `main()` 统一控制。程序启动后，首先根据用户是否提供 `--config` 参数执行默认配置加载；若配置文件存在，则 `load\_parser\_defaults()` 先从 TOML 或 JSON 文件中提取默认值，再由命令行显式参数覆盖同名字段，最终通过 `build\_configs()` 生成 `AppConfig` 对象。随后，系统调用 `ensure\_runtime\_dirs()` 创建输出目录体系，初始化日志，设置随机种子，并保存配置快照和运行元数据。这一处理保证了无论执行哪一种模式，运行前都能保留完整的上下文信息。
+
+预处理模式对应的主要数据流为“原始文件发现—数据合并—列规范化—缺失值处理—标签标准化—特征提取—训练/验证切分—产物落盘”。在该阶段，系统会扫描数据目录中的 CSV、TSV 和 Excel 文件，将其拼接为统一数据集，并根据标签列定义自动识别 `label`、`class`、`attack` 等别名字段。随后，数值型、时间型和字符串型字段分别采用不同方式完成特征化，最终生成 `train\_processed.csv`、`val\_processed.csv` 和 `label\_mapping.json` 三类核心文件，为后续训练与测试阶段提供标准输入。
+
+训练模式对应的主要数据流为“预处理产物读取—客户端切分—节点评分与选择—本地训练—更新压缩—全局聚合—轮次评估—训练历史记录—报告输出”。具体而言，系统会先通过 `load\_preprocess\_result()` 读取预处理结果，再将训练集切分为多个客户端文件，并为每个客户端维护资源状态。随后，协调端按轮次执行评分与选点，对选中客户端进行顺序本地训练，获得参数更新后执行 Top-K 稀疏化与量化，再由协调端按照样本数加权平均生成新的全局模型。每轮结束后，系统会立即记录本地损失、训练时延、通信统计、隐私代理分数和验证结果，并将累计训练历史写入 `training\_history.json`。
+
+测试模式对应的主要数据流相对直接，即“读取预处理产物—加载全局模型检查点—在验证集上评估—保存评估结果”。当前系统并没有另外构造独立测试集，而是调用 `models.py` 中的评估接口对验证集执行推理与指标计算，并将结果写入 `reports/evaluation.json`。这一设计更适合小规模工程验证：它可以快速检验模型是否能够完成完整的训练和推理闭环，同时保留混淆矩阵、样本量与延迟等指标，为后续正式实验提供依据。
+
+从输出目录组织来看，系统将运行证据明确分为数据产物、模型产物、日志产物和报告产物四类。数据产物包括训练集、验证集与标签映射；模型产物主要是全局模型检查点；日志产物集中保存在 `logs/app.log`；报告产物包括配置快照、运行元数据、评估结果以及联邦训练 JSON/Markdown 双格式报告。通过这种目录约定，系统实现了从输入到输出的证据闭环。
+
+为了便于后续继续增强排版，本节预留运行流程图和关键配置参数表位置，分别见图\ref{fig:workflow-placeholder}与表\ref{tab:config-placeholder}。
+
+\begin{figure}[htbp]
+    \centering
+    \fbox{\parbox{0.88\textwidth}{
+        \centering
+        训练流程图占位。\\
+        建议后续绘制“配置加载 $\rightarrow$ 预处理 $\rightarrow$ 客户端切分 $\rightarrow$ 节点选择 $\rightarrow$ 本地训练 $\rightarrow$ 压缩上传 $\rightarrow$ 聚合评估 $\rightarrow$ 结果落盘”的流程图。
+    }}
+    \caption{系统运行流程占位图}
+    \label{fig:workflow-placeholder}
+\end{figure}
+
+\begin{table}[htbp]
+    \centering
+    \caption{关键配置参数占位表}
+    \label{tab:config-placeholder}
+    \begin{tabular}{p{3.2cm}p{3.2cm}p{6.4cm}}
+        \toprule
+        参数类别 & 代表字段 & 说明 \\
+        \midrule
+        数据配置 & `dataset\_name`、`label\_column`、`validation\_split` & 定义数据集名称、标签列名及训练/验证集划分比例。 \\
+        训练配置 & `global\_rounds`、`num\_clients`、`client\_fraction`、`fedprox\_mu` & 定义联邦训练轮数、客户端数量、参与率和近端正则系数。 \\
+        压缩配置 & `compression\_topk\_ratio`、`quantization\_bits` & 定义上传更新的稀疏化比例与量化位宽。 \\
+        节点选择配置 & `selection\_weight\_compute`、`selection\_weight\_battery`、`selection\_weight\_channel` & 定义三维节点选择机制中的资源权重。 \\
+        运行配置 & `seed`、`deterministic`、`run\_name`、`log\_level` & 定义随机性控制、运行命名和日志行为。 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{本章小结}
+\label{sec:system-design-summary}
+
+本章从系统目标、使用场景、总体架构、模块边界、数据流和运行流程等方面对车联网联邦入侵检测系统进行了总体设计。分析表明，当前项目采用了较为清晰的模块化结构：由统一入口驱动配置加载和流程编排，以预处理、联邦训练和本地评估三类模式构成主链路，并通过结构化配置对象和输出目录约定实现模块协作与证据沉淀。该设计既满足了本科毕设中“系统分析与总体设计”章节的完整性要求，也为后续的实现细节展开提供了清晰框架。下一章将在此基础上，结合 `data\_processor.py`、`federated\_learning.py`、`models.py`、`runtime\_utils.py` 和 `app\_logging.py` 等模块，进一步说明系统的关键实现机制。
