@@ -1,0 +1,34 @@
+[dataset]
+dataset_name = "VeReMi & Car-Hacking"
+label_column = "label"
+validation_split = 0.2
+
+[path]
+data_dir = "../data"
+output_dir = "../outputs"
+checkpoint_path = "../outputs/global_model.pt"
+
+[training]
+global_rounds = 5
+num_clients = 4
+local_epochs = 1
+batch_size = 32
+learning_rate = 0.001
+device = "cpu"
+client_fraction = 0.5
+fedprox_mu = 0.0
+compression_topk_ratio = 0.1
+quantization_bits = 8
+selection_weight_compute = 0.4
+selection_weight_battery = 0.3
+selection_weight_channel = 0.3
+
+[logging]
+level = "INFO"
+json_logs = false
+log_to_file = true
+
+[runtime]
+seed = 42
+deterministic = false
+run_name = "default"

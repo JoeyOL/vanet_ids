@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vanet-ids"
+version = "0.1.0"
+description = "基于联邦学习的车联网入侵检测系统"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "torch>=1.9.0",
+  "numpy>=1.19.0",
+  "pandas>=1.2.0",
+  "scikit-learn>=0.24.0",
+  "openpyxl>=3.1.0"
+]
+
+[project.scripts]
+vanet-ids = "main:main"
+
+[tool.setuptools]
+py-modules = [
+  "app_logging",
+  "config",
+  "data_processor",
+  "federated_learning",
+  "main",
+  "metrics",
+  "models",
+  "runtime_utils",
+  "schemas"
+]

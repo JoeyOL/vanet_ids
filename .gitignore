@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+*.swp
+
+outputs/
+data/
+logs/
+reports/
+
+.coverage
+htmlcov/
